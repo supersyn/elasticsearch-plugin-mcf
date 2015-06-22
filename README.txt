@@ -17,8 +17,8 @@ Compatibility
 ------------
 
 This version of this component is fully functional with Apache ManifoldCF 1.6 and
-above and with Elasticsearch 1.5.2 and above. It is backwards compatible with earlier
-versions as well, except for the fact that two additional ElasticSearch fields are
+above and with Elasticsearch 1.6. It is backwards compatible with earlier
+versions of ManifoldCF as well, except for the fact that two additional ElasticSearch fields are
 required for this plugin to work.
 
 Upgrading
