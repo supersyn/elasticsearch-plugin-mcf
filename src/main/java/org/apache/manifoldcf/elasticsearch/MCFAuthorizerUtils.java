@@ -30,10 +30,10 @@ import org.apache.http.util.EntityUtils;
 import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.support.IndicesOptions;
+import org.elasticsearch.action.support.QuerySourceBuilder;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
-import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.index.query.*;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.action.search.RestSearchAction;
@@ -41,9 +41,9 @@ import org.elasticsearch.rest.action.support.RestActions;
 import org.elasticsearch.search.Scroll;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.fetch.source.FetchSourceContext;
+import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.sort.SortOrder;
-import org.elasticsearch.search.suggest.SuggestBuilders;
-import org.elasticsearch.search.suggest.term.TermSuggestionBuilder;
+import org.elasticsearch.index.query.QueryStringQueryBuilder.Operator;
 
 import java.io.*;
 import java.net.URLEncoder;
@@ -51,6 +51,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import static org.elasticsearch.common.unit.TimeValue.parseTimeValue;
+import static org.elasticsearch.search.suggest.SuggestBuilders.termSuggestion;
+
 
 public class MCFAuthorizerUtils {
 
@@ -80,7 +84,6 @@ public class MCFAuthorizerUtils {
       String[] indices = Strings.splitStringByCommaToArray(request.param("index"));
       searchRequest = new SearchRequest(indices);
       boolean isTemplateRequest = request.path().endsWith("/template");
-
       if(request.hasContent() || request.hasParam("source")) {
         FilterBuilder authorizationFilter = buildAuthorizationFilter(username);
         FilteredQueryBuilder filteredQueryBuilder;
@@ -111,10 +114,11 @@ public class MCFAuthorizerUtils {
 
       searchRequest.extraSource(parseSearchSourceMCF(request));
       searchRequest.searchType(request.param("search_type"));
-      searchRequest.queryCache(request.paramAsBoolean("query_cache", (Boolean)null));
+      searchRequest.queryCache(request.paramAsBoolean("query_cache", null));
+
       String scroll = request.param("scroll");
       if(scroll != null) {
-        searchRequest.scroll(new Scroll(TimeValue.parseTimeValue(scroll, (TimeValue)null)));
+        searchRequest.scroll(new Scroll(parseTimeValue(scroll,null)));
       }
 
       searchRequest.types(Strings.splitStringByCommaToArray(request.param("type")));
@@ -130,223 +134,182 @@ public class MCFAuthorizerUtils {
 
   public static SearchSourceBuilder parseSearchSourceMCF(RestRequest request) throws MCFAuthorizerException {
     SearchSourceBuilder searchSourceBuilder = null;
-    String queryString = request.param("q");
-    if(queryString != null) {
-      FilterBuilder authorizationFilter = buildAuthorizationFilter(request.param("u"));
-      QueryStringQueryBuilder from = QueryBuilders.queryStringQuery(queryString);
-      from.defaultField(request.param("df"));
-      from.analyzer(request.param("analyzer"));
-      from.analyzeWildcard(request.paramAsBoolean("analyze_wildcard", false));
-      from.lowercaseExpandedTerms(request.paramAsBoolean("lowercase_expanded_terms", true));
-      from.lenient(request.paramAsBoolean("lenient", (Boolean)null));
-      String size = request.param("default_operator");
-      if(size != null) {
-        if("OR".equals(size)) {
-          from.defaultOperator(QueryStringQueryBuilder.Operator.OR);
-        } else {
-          if(!"AND".equals(size)) {
-            throw new ElasticsearchIllegalArgumentException("Unsupported defaultOperator [" + size + "], can either be [OR] or [AND]");
-          }
+    QuerySourceBuilder querySourceBuilder = parseQuerySource(request);
+    if (querySourceBuilder != null) {
+      searchSourceBuilder = new SearchSourceBuilder();
+      searchSourceBuilder.query(querySourceBuilder);
+    }
 
-          from.defaultOperator(QueryStringQueryBuilder.Operator.AND);
-        }
-      }
-
+    int from = request.paramAsInt("from", -1);
+    if(from != -1) {
       if(searchSourceBuilder == null) {
         searchSourceBuilder = new SearchSourceBuilder();
       }
-
-      searchSourceBuilder.query(QueryBuilders.filteredQuery(from, authorizationFilter));
-    }
-    else {
-        if(!(request.hasContent() || request.hasParam("source"))){
-          if(searchSourceBuilder == null) {
-            searchSourceBuilder = new SearchSourceBuilder();
-          }
-          FilterBuilder authorizationFilter = buildAuthorizationFilter(request.param("u"));
-          searchSourceBuilder.query(QueryBuilders.filteredQuery(QueryBuilders.matchAllQuery(),authorizationFilter));
-        }
+      searchSourceBuilder.from(from);
     }
 
-    int var19 = request.paramAsInt("from", -1);
-    if(var19 != -1) {
+    int size = request.paramAsInt("size", -1);
+    if(size != -1) {
       if(searchSourceBuilder == null) {
         searchSourceBuilder = new SearchSourceBuilder();
       }
-
-      searchSourceBuilder.from(var19);
-    }
-
-    int var20 = request.paramAsInt("size", -1);
-    if(var20 != -1) {
-      if(searchSourceBuilder == null) {
-        searchSourceBuilder = new SearchSourceBuilder();
-      }
-
-      searchSourceBuilder.size(var20);
+      searchSourceBuilder.size(size);
     }
 
     if(request.hasParam("explain")) {
       if(searchSourceBuilder == null) {
         searchSourceBuilder = new SearchSourceBuilder();
       }
-
-      searchSourceBuilder.explain(request.paramAsBoolean("explain", (Boolean)null));
+      searchSourceBuilder.explain(request.paramAsBoolean("explain", null));
     }
 
     if(request.hasParam("version")) {
       if(searchSourceBuilder == null) {
         searchSourceBuilder = new SearchSourceBuilder();
       }
-
-      searchSourceBuilder.version(request.paramAsBoolean("version", (Boolean)null));
+      searchSourceBuilder.version(request.paramAsBoolean("version", null));
     }
 
     if(request.hasParam("timeout")) {
       if(searchSourceBuilder == null) {
         searchSourceBuilder = new SearchSourceBuilder();
       }
-
-      searchSourceBuilder.timeout(request.paramAsTime("timeout", (TimeValue)null));
+      searchSourceBuilder.timeout(request.paramAsTime("timeout", null));
     }
 
     if(request.hasParam("terminate_after")) {
       if(searchSourceBuilder == null) {
         searchSourceBuilder = new SearchSourceBuilder();
       }
-
-      int sField = request.paramAsInt("terminate_after", 0);
-      if(sField < 0) {
+      int terminateAfter = request.paramAsInt("terminate_after",
+              SearchContext.DEFAULT_TERMINATE_AFTER);
+      if(terminateAfter < 0) {
         throw new ElasticsearchIllegalArgumentException("terminateAfter must be > 0");
-      }
-
-      if(sField > 0) {
-        searchSourceBuilder.terminateAfter(sField);
+      }else if(terminateAfter > 0) {
+        searchSourceBuilder.terminateAfter(terminateAfter);
       }
     }
 
-    String var21 = request.param("fields");
-    String suggestField;
-    if(var21 != null) {
+    String sField = request.param("fields");
+    if(sField != null) {
       if(searchSourceBuilder == null) {
         searchSourceBuilder = new SearchSourceBuilder();
       }
-
-      if(!Strings.hasText(var21)) {
+      if(!Strings.hasText(sField)) {
         searchSourceBuilder.noFields();
       } else {
-        String[] fetchSourceContext = Strings.splitStringByCommaToArray(var21);
-        if(fetchSourceContext != null) {
-          String[] sSorts = fetchSourceContext;
-          int sIndicesBoost = fetchSourceContext.length;
-
-          for(int sStats = 0; sStats < sIndicesBoost; ++sStats) {
-            suggestField = sSorts[sStats];
-            searchSourceBuilder.field(suggestField);
+        String[] sFields = Strings.splitStringByCommaToArray(sField);
+        if (sFields != null) {
+          for (String field : sFields) {
+            searchSourceBuilder.field(field);
           }
         }
       }
     }
 
-    FetchSourceContext var22 = FetchSourceContext.parseFromRestRequest(request);
-    if(var22 != null) {
-      if(searchSourceBuilder == null) {
+    String sFieldDataFields = request.param("fielddata_fields");
+    if (sFieldDataFields != null) {
+      if (searchSourceBuilder == null) {
         searchSourceBuilder = new SearchSourceBuilder();
       }
-
-      searchSourceBuilder.fetchSource(var22);
+      if (Strings.hasText(sFieldDataFields)) {
+        String[] sFields = Strings.splitStringByCommaToArray(sFieldDataFields);
+        if (sFields != null) {
+          for (String field : sFields) {
+            searchSourceBuilder.fieldDataField(field);
+          }
+        }
+      }
+    }
+    FetchSourceContext fetchSourceContext = FetchSourceContext.parseFromRestRequest(request);
+    if (fetchSourceContext != null) {
+      if (searchSourceBuilder == null) {
+        searchSourceBuilder = new SearchSourceBuilder();
+      }
+      searchSourceBuilder.fetchSource(fetchSourceContext);
     }
 
-    if(request.hasParam("track_scores")) {
-      if(searchSourceBuilder == null) {
+    if (request.hasParam("track_scores")) {
+      if (searchSourceBuilder == null) {
         searchSourceBuilder = new SearchSourceBuilder();
       }
-
       searchSourceBuilder.trackScores(request.paramAsBoolean("track_scores", false));
     }
 
-    String var23 = request.param("sort");
-    int suggestText;
-    String indexName;
-    String[] var26;
-    if(var23 != null) {
-      if(searchSourceBuilder == null) {
+    String sSorts = request.param("sort");
+    if (sSorts != null) {
+      if (searchSourceBuilder == null) {
         searchSourceBuilder = new SearchSourceBuilder();
       }
-
-      String[] var24 = Strings.splitStringByCommaToArray(var23);
-      var26 = var24;
-      int var27 = var24.length;
-
-      for(suggestText = 0; suggestText < var27; ++suggestText) {
-        String suggestSize = var26[suggestText];
-        int suggestMode = suggestSize.lastIndexOf(":");
-        if(suggestMode != -1) {
-          String divisor = suggestSize.substring(0, suggestMode);
-          indexName = suggestSize.substring(suggestMode + 1);
-          if("asc".equals(indexName)) {
-            searchSourceBuilder.sort(divisor, SortOrder.ASC);
-          } else if("desc".equals(indexName)) {
-            searchSourceBuilder.sort(divisor, SortOrder.DESC);
+      String[] sorts = Strings.splitStringByCommaToArray(sSorts);
+      for (String sort : sorts) {
+        int delimiter = sort.lastIndexOf(":");
+        if (delimiter != -1) {
+          String sortField = sort.substring(0, delimiter);
+          String reverse = sort.substring(delimiter + 1);
+          if ("asc".equals(reverse)) {
+            searchSourceBuilder.sort(sortField, SortOrder.ASC);
+          } else if ("desc".equals(reverse)) {
+            searchSourceBuilder.sort(sortField, SortOrder.DESC);
           }
         } else {
-          searchSourceBuilder.sort(suggestSize);
+          searchSourceBuilder.sort(sort);
         }
       }
     }
 
-    String var25 = request.param("indices_boost");
-    int var31;
-    String var32;
-    if(var25 != null) {
-      if(searchSourceBuilder == null) {
+    String sStats = request.param("stats");
+    if (sStats != null) {
+      if (searchSourceBuilder == null) {
         searchSourceBuilder = new SearchSourceBuilder();
       }
-
-      var26 = Strings.splitStringByCommaToArray(var25);
-      String[] var29 = var26;
-      suggestText = var26.length;
-
-      for(var31 = 0; var31 < suggestText; ++var31) {
-        var32 = var29[var31];
-        int var33 = var32.indexOf(44);
-        if(var33 == -1) {
-          throw new ElasticsearchIllegalArgumentException("Illegal index boost [" + var32 + "], no \',\'");
-        }
-
-        indexName = var32.substring(0, var33);
-        String sBoost = var32.substring(var33 + 1);
-
-        try {
-          searchSourceBuilder.indexBoost(indexName, Float.parseFloat(sBoost));
-        } catch (NumberFormatException var18) {
-          throw new ElasticsearchIllegalArgumentException("Illegal index boost [" + var32 + "], boost not a float number");
-        }
-      }
+      searchSourceBuilder.stats(Strings.splitStringByCommaToArray(sStats));
     }
 
-    String var28 = request.param("stats");
-    if(var28 != null) {
-      if(searchSourceBuilder == null) {
+    String suggestField = request.param("suggest_field");
+    if (suggestField != null) {
+      String suggestText = request.param("suggest_text", request.param("q"));
+      int suggestSize = request.paramAsInt("suggest_size", 5);
+      if (searchSourceBuilder == null) {
         searchSourceBuilder = new SearchSourceBuilder();
       }
-
-      searchSourceBuilder.stats(Strings.splitStringByCommaToArray(var28));
-    }
-
-    suggestField = request.param("suggest_field");
-    if(suggestField != null) {
-      String var30 = request.param("suggest_text", queryString);
-      var31 = request.paramAsInt("suggest_size", 5);
-      if(searchSourceBuilder == null) {
-        searchSourceBuilder = new SearchSourceBuilder();
-      }
-
-      var32 = request.param("suggest_mode");
-      searchSourceBuilder.suggest().addSuggestion(((TermSuggestionBuilder)((TermSuggestionBuilder)((TermSuggestionBuilder)SuggestBuilders.termSuggestion(suggestField).field(suggestField)).text(var30)).size(var31)).suggestMode(var32));
+      String suggestMode = request.param("suggest_mode");
+      searchSourceBuilder.suggest().addSuggestion(
+              termSuggestion(suggestField).field(suggestField).text(suggestText).size(suggestSize)
+                      .suggestMode(suggestMode)
+      );
     }
 
     return searchSourceBuilder;
+  }
+
+  public static QuerySourceBuilder parseQuerySource(RestRequest request) {
+    String queryString = request.param("q");
+    if(queryString == null) {
+      return null;
+    } else {
+      FilterBuilder authorizationFilter = buildAuthorizationFilter(request.param("u"));
+      QueryStringQueryBuilder queryBuilder = QueryBuilders.queryStringQuery(queryString);
+      queryBuilder.defaultField(request.param("df"));
+      queryBuilder.analyzer(request.param("analyzer"));
+      queryBuilder.analyzeWildcard(request.paramAsBoolean("analyze_wildcard", false));
+      queryBuilder.lowercaseExpandedTerms(request.paramAsBoolean("lowercase_expanded_terms", true));
+      queryBuilder.lenient(request.paramAsBoolean("lenient", null));
+      String defaultOperator = request.param("default_operator");
+      if(defaultOperator != null) {
+        if("OR".equals(defaultOperator)) {
+          queryBuilder.defaultOperator(Operator.OR);
+        } else {
+          if(!"AND".equals(defaultOperator)) {
+            throw new ElasticsearchIllegalArgumentException("Unsupported defaultOperator [" + defaultOperator + "], can either be [OR] or [AND]");
+          }
+
+          queryBuilder.defaultOperator(Operator.AND);
+        }
+      }
+
+      return (new QuerySourceBuilder()).setQuery(QueryBuilders.filteredQuery(queryBuilder, authorizationFilter));
+    }
   }
 
   /** Main method for building a filter representing appropriate security.

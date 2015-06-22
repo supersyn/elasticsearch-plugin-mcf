@@ -1,9 +1,14 @@
 Apache ManifoldCF Plugin for Elastic Search change Log
 $Id: CHANGES.txt 1571169 2015-04-29  Bartlomiej Superson $
 
+======================= Release 3.1 =====================
+
+Plugin modified to work with Elasticsearch 1.6.0.
+
 ======================= Release 3.0 =====================
 
 Plugin modified to work with Elasticsearch 1.5.2.
+Modification to filter securely and automatically results of queries when username "u" parameter is set.
 
 ======================= Release 2.0 =====================
 

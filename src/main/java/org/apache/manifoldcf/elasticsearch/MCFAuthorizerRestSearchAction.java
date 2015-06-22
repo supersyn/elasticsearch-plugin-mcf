@@ -19,6 +19,7 @@
 package org.apache.manifoldcf.elasticsearch;
 
 import org.elasticsearch.action.search.SearchRequest;
+import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
@@ -28,8 +29,8 @@ import org.elasticsearch.rest.action.support.RestStatusToXContentListener;
 
  /*
     New parseSearchRequestMCF function added in utils to parse RestRequest.
-    There are also problems with security using JavaSearchAPI, because it doesn't implements setParam function
-    to set username param, but this can be ommited using JavaScriptAPI, which allows to do that.
+    There are also problems with security using APIs, because it doesn't implement setParam function
+    to set username param, but this can be used by adding it manually, e.g. through additional Spring Restpoint.
     Security filter can be also applied in this class but there is a problem with proper extraSource parsing.
     There is also a possibility to create service, inject RestController into it, register RestFilter in it, which
     should be used only if request handled by RestSearchAction and replace query from this request with
@@ -46,7 +47,6 @@ public class MCFAuthorizerRestSearchAction extends RestSearchAction {
   @Override
   public void handleRequest(RestRequest request, RestChannel channel, Client client) {
     SearchRequest searchRequest = MCFAuthorizerUtils.parseSearchRequestMCF(request);
-    searchRequest.listenerThreaded(false);
-    client.search(searchRequest, new RestStatusToXContentListener(channel));
+    client.search(searchRequest, new RestStatusToXContentListener<SearchResponse>(channel));
   }
 }
