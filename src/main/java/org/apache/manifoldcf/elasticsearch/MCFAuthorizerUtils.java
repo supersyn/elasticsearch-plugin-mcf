@@ -74,15 +74,15 @@ public class MCFAuthorizerUtils {
 
   public static SearchRequest parseSearchRequestMCF(RestRequest request) throws MCFAuthorizerException {
     SearchRequest searchRequest;
-    String username = request.param("u");
-    //if(username==null) throw new MCFAuthorizerException("Username not passed.");
-    if(username!=null) {
+    //if(usernameAndDomain[0]==null) throw new MCFAuthorizerException("Username not passed.");
+    if(request.param("u")!=null) {
+      String[] authenticatedUserNamesAndDomains = request.param("u").split(",");
       String[] indices = Strings.splitStringByCommaToArray(request.param("index"));
       searchRequest = new SearchRequest(indices);
       boolean isTemplateRequest = request.path().endsWith("/template");
 
       if(request.hasContent() || request.hasParam("source")) {
-        FilterBuilder authorizationFilter = buildAuthorizationFilter(username);
+        FilterBuilder authorizationFilter = buildAuthorizationFilter(authenticatedUserNamesAndDomains);
         FilteredQueryBuilder filteredQueryBuilder;
 
         ObjectMapper objectMapper = new ObjectMapper();
@@ -132,7 +132,8 @@ public class MCFAuthorizerUtils {
     SearchSourceBuilder searchSourceBuilder = null;
     String queryString = request.param("q");
     if(queryString != null) {
-      FilterBuilder authorizationFilter = buildAuthorizationFilter(request.param("u"));
+      String[] authenticatedUserNamesAndDomains = request.param("u").split(",");
+      FilterBuilder authorizationFilter = buildAuthorizationFilter(authenticatedUserNamesAndDomains);
       QueryStringQueryBuilder from = QueryBuilders.queryStringQuery(queryString);
       from.defaultField(request.param("df"));
       from.analyzer(request.param("analyzer"));
@@ -348,6 +349,25 @@ public class MCFAuthorizerUtils {
 
     return searchSourceBuilder;
   }
+
+  /** Main method for building a filter representing appropriate security.
+   *@param authenticatedUserNamesAndDomains is a list of user names and its domains in the form "user@domain".
+   *@return the filter builder.
+   */
+  public static FilterBuilder buildAuthorizationFilter(String[] authenticatedUserNamesAndDomains)
+          throws  MCFAuthorizerException{
+    Map<String,String> domainMap = new HashMap<String,String>();
+    for(String buffer : authenticatedUserNamesAndDomains){
+      String[] authenticatedUserNameAndDomain = buffer.split("@", 2);
+      String authenticatedUserName = authenticatedUserNameAndDomain[0];
+      String authenticatedUserDomain;
+      if(authenticatedUserNameAndDomain.length<2) authenticatedUserDomain="";
+      else authenticatedUserDomain=authenticatedUserNameAndDomain[1];
+      domainMap.put(authenticatedUserDomain, authenticatedUserName);
+    }
+    return buildAuthorizationFilter(domainMap);
+  }
+
 
   /** Main method for building a filter representing appropriate security.
    *@param domainMap is a map from MCF authorization domain name to user name,
